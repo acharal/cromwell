@@ -38,6 +38,8 @@ import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.sts.StsClient
 import software.amazon.awssdk.services.sts.model.{AssumeRoleRequest, GetCallerIdentityRequest}
 
+import java.net.URI
+
 import scala.util.{Failure, Success, Try}
 
 object AwsAuthMode {
@@ -66,13 +68,14 @@ sealed trait AwsAuthMode {
     * like Mockito or other java/scala overrides cannot work.
     */
    private[auth] var credentialValidation: (AwsCredentials, Option[String]) => Unit =
-     (credentials: AwsCredentials, region: Option[String]) => {
+     (credentials: AwsCredentials, endpoint: Option[URI], region: Option[String]) => {
        val builder = StsClient.builder
 
        //If the region argument exists in config, set it in the builder.
        //Otherwise it is left unset and the AwsCredential builder will look in various places to supply,
        //ultimately using US-EAST-1 if none is found
        region.map(Region.of).foreach(builder.region)
+       endpoint.foreach(builder.endpointOverride)
 
        builder.credentialsProvider(StaticCredentialsProvider.create(credentials))
          .build
@@ -80,8 +83,8 @@ sealed trait AwsAuthMode {
        ()
      }
 
-  protected def validateCredential(credential: AwsCredentials, region: Option[String]) = {
-    Try(credentialValidation(credential, region)) match {
+  protected def validateCredential(credential: AwsCredentials, endpoint: Option[URI], region: Option[String]) = {
+    Try(credentialValidation(credential, endpoint, region)) match {
       case Failure(ex) => throw new RuntimeException(s"Credentials are invalid: ${ex.getMessage}", ex)
       case Success(_) => credential
     }
@@ -101,19 +104,20 @@ object CustomKeyMode
 final case class CustomKeyMode(override val name: String,
                                     accessKey: String,
                                     secretKey: String,
+                                    endpoint: Option[URI],
                                     region: Option[String]
                                     ) extends AwsAuthMode {
   private lazy val _credential: AwsCredentials = {
     // Validate credentials synchronously here, without retry.
     // It's very unlikely to fail as it should not happen more than a few times
     // (one for the engine and for each backend using it) per Cromwell instance.
-    validateCredential(AwsBasicCredentials.create(accessKey, secretKey), region)
+    validateCredential(AwsBasicCredentials.create(accessKey, secretKey), endpoint, region)
   }
 
   override def credential(options: OptionLookup): AwsCredentials = _credential
 }
 
-final case class DefaultMode(override val name: String, region: Option[String]) extends AwsAuthMode {
+final case class DefaultMode(override val name: String, endpoint: Option[URI], region: Option[String]) extends AwsAuthMode {
   private lazy val _credential: AwsCredentials = {
     //
     // The ProfileCredentialsProvider will return your [default]
@@ -124,7 +128,7 @@ final case class DefaultMode(override val name: String, region: Option[String]) 
     // Validate credentials synchronously here, without retry.
     // It's very unlikely to fail as it should not happen more than a few times
     // (one for the engine and for each backend using it) per Cromwell instance.
-    validateCredential(DefaultCredentialsProvider.create.resolveCredentials(), region)
+    validateCredential(DefaultCredentialsProvider.create.resolveCredentials(), endpoint, region)
   }
 
   override def credential(options: OptionLookup): AwsCredentials = _credential
@@ -135,6 +139,7 @@ final case class AssumeRoleMode(override val name: String,
                           baseAuthName: String,
                           roleArn: String,
                           externalId: String,
+                          endpoint: Option[URI],
                           region: Option[String]
                           ) extends AwsAuthMode {
 
@@ -153,6 +158,7 @@ final case class AssumeRoleMode(override val name: String,
 
     val builder = StsClient.builder
     region.foreach(str => builder.region(Region.of(str)))
+    endpoint.foreach(builder.endpointOverride)
     // See comment above regarding builder
     baseAuthObj match{
       case Some(auth) => builder.credentialsProvider(StaticCredentialsProvider.create(auth.credential(_ => "")))
@@ -166,7 +172,7 @@ final case class AssumeRoleMode(override val name: String,
                                stsCredentials.secretAccessKey,
                                stsCredentials.sessionToken)
 
-    validateCredential(sessionCredentials, region)
+    validateCredential(sessionCredentials, endpoint, region)
   }
 
   override def credential(options: OptionLookup): AwsCredentials = _credential

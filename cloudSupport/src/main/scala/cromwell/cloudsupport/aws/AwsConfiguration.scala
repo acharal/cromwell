@@ -89,12 +89,14 @@ object AwsConfiguration {
     val endpoint: Option[String] =
       awsConfig.getAs[String]("endpoint")
 
+    val endpointURI : Option[URI] = endpoint.map(URI.create(_))
+
     def buildAuth(authConfig: Config): ErrorOr[AwsAuthMode] = {
 
       def customKeyAuth(authConfig: Config, name: String, region: Option[String]): ErrorOr[AwsAuthMode] = validate {
         (authConfig.getAs[String]("access-key"), authConfig.getAs[String]("secret-key")) match {
           case (Some(accessKey), Some(secretKey)) =>
-            CustomKeyMode(name, accessKey, secretKey, region)
+            CustomKeyMode(name, accessKey, secretKey, endpointURI, region)
           case _ => throw new ConfigException.Generic(s"""Access key and/or secret """ +
             s"""key missing for service account "$name". See reference.conf under the aws.auth, """ +
             s"""custom key section for details of required configuration.""")
@@ -102,7 +104,7 @@ object AwsConfiguration {
       }
 
       def defaultAuth(authConfig: Config, name: String, region: Option[String]): ErrorOr[AwsAuthMode] =  validate {
-        DefaultMode(name, region)
+        DefaultMode(name, endpointURI, region)
       }
 
       def assumeRoleAuth(authConfig: Config, name: String, region: Option[String]): ErrorOr[AwsAuthMode] = validate {
@@ -114,6 +116,7 @@ object AwsConfiguration {
           authConfig.getString("base-auth"),
           authConfig.getString("role-arn"),
           externalId,
+          endpointURI,
           region
         )
       }

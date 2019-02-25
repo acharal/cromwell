@@ -196,3 +196,144 @@ case class S3Path private[s3](nioPath: NioPath,
     }
   }
 }
+
+
+object S3CompPathBuilder {
+
+  // Provides some level of validation of bucket names
+  // This is meant to alert the user early if they mistyped a path in their workflow / inputs and not to validate
+  // exact bucket syntax.
+  // See https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html
+  val S3BucketPattern =
+  """
+      (?x)                                      # Turn on comments and whitespace insensitivity
+      ^s3://
+      (                                         # Begin capturing group for bucket name
+        [a-z0-9][a-z0-9-_\.]+[a-z0-9]           # Regex for bucket name - soft validation, see comment above
+      )                                         # End capturing group for bucket name
+      (?:
+        /.*                                     # No validation here
+      )?
+    """.trim.r
+
+  sealed trait S3PathValidation
+  case class ValidFullS3CompPath(endpoint: URI, path: String) extends S3PathValidation
+  case object PossiblyValidRelativeS3Path extends S3PathValidation
+  sealed trait InvalidS3Path extends S3PathValidation {
+    def pathString: String
+    def errorMessage: String
+  }
+  final case class InvalidScheme(pathString: String) extends InvalidS3Path {
+    override def errorMessage: String = s"S3 URIs must have 's3' scheme: $pathString"
+  }
+  final case class InvalidFullS3Path(pathString: String) extends InvalidS3Path {
+    override def errorMessage: String = {
+      s"""
+         |The path '$pathString' does not seem to be a valid S3 path.
+         |Please check that it starts with s3:// and that the bucket and object follow S3 naming guidelines at
+         |https://docs.aws.amazon.com/AmazonS3/latest/dev/BucketRestrictions.html
+      """.stripMargin.replace("\n", " ").trim
+    }
+  }
+  final case class UnparseableS3Path(pathString: String, throwable: Throwable) extends InvalidS3Path {
+    override def errorMessage: String =
+      List(s"The specified S3 path '$pathString' does not parse as a URI.", throwable.getMessage).mkString("\n")
+  }
+
+  def pathToUri(string: String): URI =
+    URI.create(UrlEscapers.urlFragmentEscaper.escape(string))
+
+  def validatePath(string: String): S3PathValidation = {
+    Try {
+      val uri = pathToUri(string)
+      if (uri.getScheme == null) { PossiblyValidRelativeS3Path }
+      else if (uri.getScheme.equalsIgnoreCase("s3")) {
+        if (uri.getHost == null) {
+          InvalidFullS3Path(string)
+        } else {
+          val endpointURI = URI.create(s"${uri.getScheme()}://${uri.getAuthority()}")
+          ValidFullS3CompPath(endpointURI, uri.getPath)
+        }
+      } else { InvalidScheme(string) }
+    } recover { case t => UnparseableS3Path(string, t) } get
+  }
+
+  def fromAuthMode(endpoint: URI,
+                   authMode: AwsAuthMode,
+                   configuration: S3Configuration,
+                   options: WorkflowOptions)(implicit ec: ExecutionContext): Future[S3CompPathBuilder] = {
+    val credentials = authMode.credential((key: String) => options.get(key).get)
+
+    // Other backends needed retry here. In case we need retry, we'll return
+    // a future. This will allow us to add capability without changing signature
+    Future(fromCredentials(endpoint,
+      credentials,
+      configuration,
+      options
+    ))
+  }
+
+  def fromCredentials(endpoint: URI,
+                      credentials: AwsCredentials,
+                      configuration: S3Configuration,
+                      options: WorkflowOptions): S3CompPathBuilder = {
+    new S3CompPathBuilder(endpoint, credentials, configuration)
+  }
+}
+
+class S3CompPathBuilder(endpoint: URI,
+                        credentials: AwsCredentials,
+                        configuration: S3Configuration
+                       ) extends PathBuilder {
+
+  import S3CompPathBuilder._
+
+  // Tries to create a new S3Path from a String representing an absolute s3 path: s3://<bucket>[/<key>].
+  def build(string: String): Try[S3CompPath] = {
+    validatePath(string) match {
+      case ValidFullS3CompPath(endpoint1, path) =>
+        Try {
+          // TODO: System.getenv needs to turn into a full Auth thingy
+          val s3Path = new S3FileSystemProvider()
+            .getFileSystem(endpoint1, System.getenv)
+            .getPath(path)
+          S3CompPath(s3Path, endpoint1)
+        }
+      case PossiblyValidRelativeS3Path => Failure(new IllegalArgumentException(s"$string does not have a s3 scheme"))
+      case invalid: InvalidS3Path => Failure(new IllegalArgumentException(invalid.errorMessage))
+    }
+  }
+
+  override def name: String = "s3"
+}
+
+
+case class S3CompPath private[s3](nioPath: NioPath,
+                                  endpoint: URI
+                             ) extends Path {
+  override protected def newPath(nioPath: NioPath): S3CompPath = S3CompPath(nioPath, endpoint)
+
+  override def pathAsString: String = {
+    // pathWithoutScheme will have a leading '/', so by only prepending 's3:/', we'll end up with s3:// as expected
+    s"${endpoint}$pathWithoutScheme"
+  }
+
+  override def pathWithoutScheme: String =
+    safeAbsolutePath.stripPrefix(endpoint.toString)
+
+  def key: String = safeAbsolutePath
+
+  /** Gets an absolute path for multiple forms of input. The FS provider does
+    *  not support "toAbsolutePath" on forms such as "mypath/" or "foo.bar"
+    *  So this function will prepend a forward slash for input that looks like this
+    *  while leaving properly rooted input or input beginning with s3:// alone
+    */
+  def safeAbsolutePath: String = {
+    val originalPath = nioPath.toString
+    if (originalPath.startsWith("s3")) return nioPath.toAbsolutePath.toString
+    originalPath.charAt(0) match {
+      case '/' =>  nioPath.toAbsolutePath.toString
+      case _ => nioPath.resolve(originalPath).toAbsolutePath.toString
+    }
+  }
+}

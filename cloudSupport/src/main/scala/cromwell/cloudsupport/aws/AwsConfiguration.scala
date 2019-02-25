@@ -35,6 +35,8 @@ import cats.data.Validated._
 import cats.instances.list._
 import cats.syntax.traverse._
 import cats.syntax.validated._
+import java.net.URI
+
 import com.typesafe.config.{Config, ConfigException}
 import common.exception.MessageAggregation
 import common.validation.ErrorOr._
@@ -46,6 +48,7 @@ import software.amazon.awssdk.regions.Region
 
 final case class AwsConfiguration private (applicationName: String,
                                            authsByName: Map[String, AwsAuthMode],
+                                           strEndpoint: Option[String],
                                            strRegion: Option[String]) {
 
   def auth(name: String): ErrorOr[AwsAuthMode] = {
@@ -57,6 +60,7 @@ final case class AwsConfiguration private (applicationName: String,
     }
   }
 
+  def endpoint: Option[URI] = strEndpoint.map(URI.create(_))
   def region: Option[Region] = strRegion.map(Region.of)
 }
 
@@ -81,6 +85,9 @@ object AwsConfiguration {
 
     val region: Option[String] =
       awsConfig.getAs[String]("region")
+
+    val endpoint: Option[String] =
+      awsConfig.getAs[String]("endpoint")
 
     def buildAuth(authConfig: Config): ErrorOr[AwsAuthMode] = {
 
@@ -156,7 +163,7 @@ object AwsConfiguration {
 
     (appName, errorOrAuthList).flatMapN { (name, list) =>
       uniqueAuthNames(list) map { _ =>
-        AwsConfiguration(name, list map { a => a.name -> a } toMap, region)
+        AwsConfiguration(name, list map { a => a.name -> a } toMap, endpoint, region)
       }
     } match {
       case Valid(r) => r

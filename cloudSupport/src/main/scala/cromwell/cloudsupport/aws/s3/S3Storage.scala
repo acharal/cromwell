@@ -35,6 +35,8 @@ import net.ceedubs.ficus.Ficus._
 import software.amazon.awssdk.auth.credentials.{AwsCredentials, StaticCredentialsProvider}
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.{S3Client, S3Configuration}
+import java.net.URI
+
 
 object S3Storage {
   val DefaultConfiguration = {
@@ -49,12 +51,24 @@ object S3Storage {
       .build
   }
 
-  def s3Client(configuration: S3Configuration, credentials: AwsCredentials, region: Option[Region]): S3Client = {
+    def s3Client(configuration: S3Configuration, credentials: AwsCredentials, region: Option[Region]): S3Client = {
+      s3Client(configuration, credentials, Option.empty, region)
+    }
+
+    def s3Client(configuration: S3Configuration, credentials: AwsCredentials, endpoint: Option[URI], region: Option[Region]): S3Client = {
     val builder = S3Client.builder
       .serviceConfiguration(configuration)
       .credentialsProvider(StaticCredentialsProvider.create(credentials))
     region.foreach(builder.region)
+    endpoint.foreach(builder.endpointOverride)
+
+    //builder.advancedConfiguration(S3AdvancedConfiguration.builder().pathStyleAccessEnabled(true).build())
+
     builder.build
+  }
+
+  def s3Client(credentials: AwsCredentials, endpoint : Option[URI], region: Option[Region]): S3Client = {
+    s3Client(s3Configuration(), credentials, endpoint, region)
   }
 
   def s3Client(credentials: AwsCredentials, region: Option[Region]): S3Client = {

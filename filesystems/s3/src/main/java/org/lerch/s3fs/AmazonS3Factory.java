@@ -49,8 +49,11 @@ public abstract class AmazonS3Factory {
      */
     public S3Client getS3Client(URI uri, Properties props) {
         S3ClientBuilder builder = S3Client.builder();
+        String protocol = props.getProperty(PROTOCOL);
+        if (protocol == null)
+            protocol = "http"
         if (uri != null && uri.getHost() != null)
-            builder.endpointOverride(uri);
+            builder.endpointOverride(URI.create(protocol + "://" + uri.getAuthority()));
 
         builder.credentialsProvider(getCredentialsProvider(props))
                .httpClient(getSdkHttpClient(props))

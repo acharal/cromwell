@@ -26,7 +26,8 @@ case class WorkflowHeartbeatConfig(
                                     heartbeatInterval: FiniteDuration,
                                     ttl: FiniteDuration,
                                     writeBatchSize: Int,
-                                    writeThreshold: Int)
+                                    writeThreshold: Int,
+                                    failureShutdownDurationOption: Option[FiniteDuration])
 {
   override def toString: String = this.asInstanceOf[WorkflowHeartbeatConfig].asJson.spaces2
 }
@@ -59,12 +60,15 @@ object WorkflowHeartbeatConfig {
     val writeBatchSize: Int = Math.max(heartbeats.getOrElse("write-batch-size", 100), 1)
     val writeThreshold: Int = Math.max(heartbeats.getOrElse("write-threshold", 100), 1)
 
+    val failureShutdownDurationOption = heartbeats.getAs[FiniteDuration]("write-failure-shutdown-duration")
+
     WorkflowHeartbeatConfig(
       cromwellId = cromwellId,
       heartbeatInterval = heartbeatInterval,
       ttl = ttl,
       writeBatchSize = writeBatchSize,
-      writeThreshold = writeThreshold
+      writeThreshold = writeThreshold,
+      failureShutdownDurationOption = failureShutdownDurationOption
     )
   }
 }

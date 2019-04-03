@@ -1,6 +1,7 @@
 package cromwell.backend.impl.tes
 
 import cats.syntax.validated._
+import cats.syntax.list._
 import com.typesafe.config.Config
 import common.validation.ErrorOr.ErrorOr
 import cromwell.backend.standard.StandardValidatedRuntimeAttributesBuilder
@@ -9,6 +10,7 @@ import eu.timepit.refined.api.Refined
 import eu.timepit.refined.numeric.Positive
 import wom.RuntimeAttributesKeys
 import wom.format.MemorySize
+import wdl4s.parser.MemoryUnit
 import wom.values._
 
 case class TesRuntimeAttributes(continueOnReturnCode: ContinueOnReturnCode,
@@ -38,13 +40,28 @@ object TesRuntimeAttributes {
 
   private val dockerWorkingDirValidation: OptionalRuntimeAttributesValidation[String] = DockerWorkingDirValidation.optional
 
+  private val outDirMinValidation: OptionalRuntimeAttributesValidation[MemorySize] = {
+    InformationValidation.optional(RuntimeAttributesKeys.OutDirMinKey, MemoryUnit.MB, allowZero = true)
+  }
+
+  private val tmpDirMinValidation: OptionalRuntimeAttributesValidation[MemorySize] = {
+    InformationValidation.optional(RuntimeAttributesKeys.TmpDirMinKey, MemoryUnit.MB, allowZero = true)
+  }
+
+  private val inputDirMinValidation: OptionalRuntimeAttributesValidation[MemorySize] = {
+    InformationValidation.optional(RuntimeAttributesKeys.DnaNexusInputDirMinKey, MemoryUnit.MB, allowZero = true)
+  }
+
   def runtimeAttributesBuilder(backendRuntimeConfig: Option[Config]): StandardValidatedRuntimeAttributesBuilder =
     StandardValidatedRuntimeAttributesBuilder.default(backendRuntimeConfig).withValidation(
       cpuValidation(backendRuntimeConfig),
       memoryValidation(backendRuntimeConfig),
       diskSizeValidation(backendRuntimeConfig),
       dockerValidation,
-      dockerWorkingDirValidation
+      dockerWorkingDirValidation,
+      outDirMinValidation,
+      tmpDirMinValidation,
+      inputDirMinValidation
     )
 
   def apply(validatedRuntimeAttributes: ValidatedRuntimeAttributes, backendRuntimeConfig: Option[Config]): TesRuntimeAttributes = {
@@ -58,6 +75,21 @@ object TesRuntimeAttributes {
     val continueOnReturnCode: ContinueOnReturnCode =
       RuntimeAttributesValidation.extract(continueOnReturnCodeValidation(backendRuntimeConfig), validatedRuntimeAttributes)
 
+    val outDirMin: Option[MemorySize] = RuntimeAttributesValidation.extractOption(outDirMinValidation.key, validatedRuntimeAttributes)
+    val tmpDirMin: Option[MemorySize] = RuntimeAttributesValidation.extractOption(tmpDirMinValidation.key, validatedRuntimeAttributes)
+    val inputDirMin: Option[MemorySize] = RuntimeAttributesValidation.extractOption(inputDirMinValidation.key, validatedRuntimeAttributes)
+
+    val totalExecutionDiskSizeBytes = List(inputDirMin.map(_.bytes), outDirMin.map(_.bytes), tmpDirMin.map(_.bytes))
+      .flatten.toNel.map(ls => ls.toList.fold(MemorySize(0, MemoryUnit.Bytes).bytes)(_ + _))
+
+    val totalExecutionDiskSize = totalExecutionDiskSizeBytes.map(b => MemorySize(b, MemoryUnit.Bytes))
+
+    val adjustedDisk = List(disk, totalExecutionDiskSize)
+      .flatten
+      .toNel
+      .map(ls => ls.toList.map(m => m.to(MemoryUnit.GB).amount).max)
+      .map(b  => MemorySize(b, MemoryUnit.GB))
+
     new TesRuntimeAttributes(
       continueOnReturnCode,
       docker,
@@ -65,7 +97,7 @@ object TesRuntimeAttributes {
       failOnStderr,
       cpu,
       memory,
-      disk
+      adjustedDisk
     )
   }
 }
@@ -81,4 +113,3 @@ class DockerWorkingDirValidation extends StringRuntimeAttributesValidation(TesRu
     case WomString(value) => value.validNel
   }
 }
-

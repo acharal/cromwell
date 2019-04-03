@@ -10,6 +10,37 @@ import eu.timepit.refined.numeric.Positive
 import wom.RuntimeAttributesKeys
 import wom.format.MemorySize
 import wom.values._
+import wom.RuntimeAttributesKeys._
+
+import scala.util.{Failure, Success, Try}
+
+
+trait OptionalWithDefault[A] {
+  this: RuntimeAttributesValidation[A] =>
+  protected val config: Option[Config]
+
+  override protected def staticDefaultOption: Option[WomValue] = {
+    Try(this.configDefaultWomValue(config)) match {
+      case Success(value: Option[WomValue]) => value
+      case Failure(_) => None
+    }
+  }
+}
+
+
+object MemoryValidation {
+  def optionalWithDefault(attributeName: String = RuntimeAttributesKeys.MemoryKey, optionalConfig: Option[Config]) : OptionalRuntimeAttributesValidation[MemorySize] =
+    new MemoryValidation(attributeName) with OptionalWithDefault[MemorySize]{
+      val config = optionalConfig
+    }.optional
+}
+
+object CpuValidation {
+  def optionalWithDefault(optionalConfig: Option[Config]) : OptionalRuntimeAttributesValidation[Int Refined Positive] =
+    new CpuValidation(CpuKey) with OptionalWithDefault[Int Refined Positive]{
+      val config = optionalConfig
+    }.optional
+}
 
 case class TesRuntimeAttributes(continueOnReturnCode: ContinueOnReturnCode,
                                 dockerImage: String,
@@ -21,18 +52,19 @@ case class TesRuntimeAttributes(continueOnReturnCode: ContinueOnReturnCode,
 
 object TesRuntimeAttributes {
 
+
   val DockerWorkingDirKey = "dockerWorkingDir"
   val DiskSizeKey = "disk"
 
-  private def cpuValidation(runtimeConfig: Option[Config]): OptionalRuntimeAttributesValidation[Int Refined Positive] = CpuValidation.optional
+  private def cpuValidation(runtimeConfig: Option[Config]): OptionalRuntimeAttributesValidation[Int Refined Positive] = CpuValidation.optionalWithDefault(runtimeConfig)
 
   private def failOnStderrValidation(runtimeConfig: Option[Config]) = FailOnStderrValidation.default(runtimeConfig)
 
   private def continueOnReturnCodeValidation(runtimeConfig: Option[Config]) = ContinueOnReturnCodeValidation.default(runtimeConfig)
 
-  private def diskSizeValidation(runtimeConfig: Option[Config]): OptionalRuntimeAttributesValidation[MemorySize] = MemoryValidation.optional(DiskSizeKey)
+  private def diskSizeValidation(runtimeConfig: Option[Config]): OptionalRuntimeAttributesValidation[MemorySize] = MemoryValidation.optionalWithDefault(DiskSizeKey, runtimeConfig)
 
-  private def memoryValidation(runtimeConfig: Option[Config]): OptionalRuntimeAttributesValidation[MemorySize] = MemoryValidation.optional(RuntimeAttributesKeys.MemoryKey)
+  private def memoryValidation(runtimeConfig: Option[Config]): OptionalRuntimeAttributesValidation[MemorySize] = MemoryValidation.optionalWithDefault(RuntimeAttributesKeys.MemoryKey, runtimeConfig)
 
   private val dockerValidation: RuntimeAttributesValidation[String] = DockerValidation.instance
 

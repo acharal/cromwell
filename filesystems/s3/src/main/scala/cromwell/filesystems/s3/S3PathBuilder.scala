@@ -31,15 +31,17 @@
 package cromwell.filesystems.s3
 
 import java.net.URI
+
 import com.google.common.net.UrlEscapers
 import software.amazon.awssdk.auth.credentials.AwsCredentials
-import software.amazon.awssdk.services.s3.{S3Configuration,S3Client}
+import software.amazon.awssdk.services.s3.{S3Client, S3Configuration}
 import cromwell.cloudsupport.aws.auth.AwsAuthMode
 import cromwell.cloudsupport.aws.s3.S3Storage
 import cromwell.core.WorkflowOptions
 import cromwell.core.path.{NioPath, Path, PathBuilder}
 import cromwell.filesystems.s3.S3PathBuilder._
 import org.lerch.s3fs.S3FileSystemProvider
+import org.lerch.s3fs.util.S3Utils
 import software.amazon.awssdk.regions.Region
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -166,6 +168,10 @@ case class S3Path private[s3](nioPath: NioPath,
   override def pathWithoutScheme: String = safeAbsolutePath.stripPrefix("s3://s3.amazonaws.com/")
 
   def key: String = safeAbsolutePath
+
+  lazy val s3Utils = new S3Utils()
+  lazy val s3Path = nioPath.asInstanceOf[org.lerch.s3fs.S3Path]
+  lazy val eTag = s3Utils.getS3ObjectSummary(s3Path).eTag()
 
   /** Gets an absolute path for multiple forms of input. The FS provider does
    *  not support "toAbsolutePath" on forms such as "mypath/" or "foo.bar"

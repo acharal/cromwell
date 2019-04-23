@@ -57,7 +57,7 @@ final case class S3PathBuilderFactory private(globalConfig: Config, instanceConf
 
   def withOptions(options: WorkflowOptions)(implicit as: ActorSystem, ec: ExecutionContext): Future[PathBuilder] = {
     conf.endpoint.map((e) =>
-        S3CompPathBuilder.fromAuthMode(e, authMode, S3Storage.DefaultConfiguration, options)
+        S3CompPathBuilder.fromAuthMode(e, authMode, S3Storage.DefaultConfiguration, options, conf.region)
       ).getOrElse(
         S3PathBuilder.fromAuthMode(authMode, S3Storage.DefaultConfiguration,  options, conf.region)
       )
@@ -67,7 +67,7 @@ final case class S3PathBuilderFactory private(globalConfig: Config, instanceConf
   // Can be used when the Credentials are already available.
   def fromCredentials(options: WorkflowOptions, credentials: AwsCredentials): PathBuilder = {
     conf.endpoint.map((e) =>
-        S3CompPathBuilder.fromCredentials(e, credentials, S3Storage.DefaultConfiguration, options)
+        S3CompPathBuilder.fromCredentials(e, credentials, S3Storage.DefaultConfiguration, options, conf.region)
       ).getOrElse(
         S3PathBuilder.fromCredentials(credentials, S3Storage.DefaultConfiguration, options, conf.region)
       )

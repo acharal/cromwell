@@ -261,7 +261,8 @@ object S3CompPathBuilder {
   def fromAuthMode(endpoint: URI,
                    authMode: AwsAuthMode,
                    configuration: S3Configuration,
-                   options: WorkflowOptions)(implicit ec: ExecutionContext): Future[S3CompPathBuilder] = {
+                   options: WorkflowOptions,
+                   storageRegion: Option[Region])(implicit ec: ExecutionContext): Future[S3CompPathBuilder] = {
     val credentials = authMode.credential((key: String) => options.get(key).get)
 
     // Other backends needed retry here. In case we need retry, we'll return
@@ -269,21 +270,24 @@ object S3CompPathBuilder {
     Future(fromCredentials(endpoint,
       credentials,
       configuration,
-      options
+      options,
+      storageRegion
     ))
   }
 
   def fromCredentials(endpoint: URI,
                       credentials: AwsCredentials,
                       configuration: S3Configuration,
-                      options: WorkflowOptions): S3CompPathBuilder = {
-    new S3CompPathBuilder(endpoint, credentials, configuration)
+                      options: WorkflowOptions,
+                      storageRegion: Option[Region]): S3CompPathBuilder = {
+    new S3CompPathBuilder(endpoint, credentials, configuration, storageRegion)
   }
 }
 
 class S3CompPathBuilder(endpoint: URI,
                         credentials: AwsCredentials,
-                        configuration: S3Configuration
+                        configuration: S3Configuration,
+                        storageRegion: Option[Region]
                        ) extends PathBuilder {
 
   import S3CompPathBuilder._
@@ -293,9 +297,17 @@ class S3CompPathBuilder(endpoint: URI,
     validatePath(string) match {
       case ValidFullS3CompPath(endpoint1, path) =>
         Try {
-          // TODO: System.getenv needs to turn into a full Auth thingy
-          val s3Path = new S3FileSystemProvider()
-            .getFileSystem(endpoint1, System.getenv)
+          val s3FSProvider = new S3FileSystemProvider()
+
+          storageRegion.foreach(r => System.setProperty("aws.region", r.toString) )
+
+          val props = collection.mutable.Map(
+            ACCESS_KEY -> credentials.accessKeyId(),
+            SECRET_KEY -> credentials.secretAccessKey(),
+          ) ++ System.getenv.asScala
+
+          val s3Path = s3FSProvider
+            .getFileSystem(endpoint, props.asJava)
             .getPath(path)
           S3CompPath(s3Path, endpoint1)
         }
